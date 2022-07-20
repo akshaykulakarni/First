@@ -1,6 +1,6 @@
 # Elasticsearch, Logstash, Kibana (ELK) Docker image documentation
 
-This web page documents how to use the [sebp/elk](https://hub.docker.com/r/sebp/elk/) Docker image, which provides a convenient centralised log server and log management web interface, by packaging [Elasticsearch](http://www.elasticsearch.org/), [Logstash](http://logstash.net/), and [Kibana](http://www.elasticsearch.org/overview/kibana/), collectively known as ELK.
+This web page documents how to use the [sebp/elk](https://hub.docker.com/r/sebp/elk/) Docker image, which provides a convenient centralised log server and log management web interface, by packaging [Elasticsearch](https://www.elastic.co/products/elasticsearch), [Logstash](http://logstash.net/), and [Kibana](https://www.elastic.co/products/kibana), collectively known as ELK.
 
 ### Contents ###
 
@@ -18,6 +18,7 @@ This web page documents how to use the [sebp/elk](https://hub.docker.com/r/sebp/
 	- [Forwarding logs with Filebeat](#forwarding-logs-filebeat)
 	- [Connecting a Docker container to an ELK container running on the same host](#connecting-containers)
 - [Building the image](#building-image)
+	- [Building the image for ARM64](#building-image-arm64)
 - [Tweaking the image](#tweaking-image)
 	- [Updating Logstash's configuration](#updating-logstash-configuration)
 	- [Installing Elasticsearch plugins](#installing-elasticsearch-plugins)
@@ -109,11 +110,16 @@ This command publishes the following ports, which are needed for proper operatio
 - 9200 (Elasticsearch JSON interface).
 - 5044 (Logstash Beats interface, receives logs from Beats such as Filebeat – see the *[Forwarding logs with Filebeat](#forwarding-logs-filebeat)* section).
 
-**Note** – The image also exposes Elasticsearch's transport interface on port 9300. Use the `-p 9300:9300` option with the `docker` command above to publish it. This transport interface is notably used by [Elasticsearch's Java client API](https://www.elastic.co/guide/en/elasticsearch/client/java-api/current/index.html), and to run Elasticsearch in a cluster.
+The image exposes (but does not publish):
+
+- Elasticsearch's transport interface on port 9300. Use the `-p 9300:9300` option with the `docker` command above to publish it. This transport interface is notably used by [Elasticsearch's Java client API](https://www.elastic.co/guide/en/elasticsearch/client/java-api/current/index.html), and to run Elasticsearch in a cluster.
+
+- [Logstash's monitoring API](https://www.elastic.co/guide/en/logstash/current/monitoring-logstash.html) on port 9600. Use the `-p 9600:9600` option with the `docker` command above to publish it.
+
 
 The figure below shows how the pieces fit together.
 
-![](http://i.imgur.com/Og5eps4.png)
+![](https://user-images.githubusercontent.com/930566/85201704-cc2c0e80-b301-11ea-8d59-aeda442a034d.png)
 
 Access Kibana's web interface by browsing to `http://<your-host>:5601`, where `<your-host>` is the hostname or IP address of the host Docker is running on (see note), e.g. `localhost` if running a local native version of Docker, or the IP address of the virtual machine if running a VM-hosted version of Docker (see note).
 
@@ -175,7 +181,7 @@ Wait for Logstash to start (as indicated by the message `The stdin plugin is now
 
 **Note** – You can create as many entries as you want. Use `^C` to go back to the bash prompt.
 
-If you browse to `http://<your-host>:9200/_search?pretty` (e.g. [http://localhost:9200/_search?pretty](http://localhost:9200/_search?pretty) for a local native instance of Docker) you'll see that Elasticsearch has indexed the entry:
+If you browse to `http://<your-host>:9200/_search?pretty&size=1000` (e.g. [http://localhost:9200/_search?pretty&size=1000](http://localhost:9200/_search?pretty&size=1000) for a local native instance of Docker) you'll see that Elasticsearch has indexed the entry:
 
 	{
 	  ...
@@ -259,6 +265,10 @@ The following environment variables can be used to override the defaults used to
 
 - `KIBANA_CONNECT_RETRY`: number of seconds to wait for Kibana to be up before running the post-hook script (see [Pre-hooks and post-hooks](#pre-post-hooks)) (default: `30`) 
 
+- `ES_HEAP_DISABLE` and `LS_HEAP_DISABLE`: disable `HeapDumpOnOutOfMemoryError` for Elasticsearch and Logstash respectively if non-zero (default: `HeapDumpOnOutOfMemoryError` is enabled).
+
+	Setting these environment variables avoids potentially large heap dumps if the services run out of memory.
+
 
 As an illustration, the following command starts the stack, running Elasticsarch with a 2GB heap size and Logstash with a 1GB heap size:
 
@@ -286,6 +296,10 @@ This can for instance be used to add index templates to Elasticsearch or to add 
 
 Forwarding logs from a host relies on a forwarding agent that collects logs (e.g. from log files, from the syslog daemon) and sends them to our instance of Logstash.
 
+As configured in this image, Logstash expects logs from a [Beats](https://www.elastic.co/products/beats) shipper (e.g. Filebeat) over a secure (SSL/TLS) connection.
+
+**Note** – See [this comment](https://github.com/spujadas/elk-docker/issues/264#issuecomment-481191669) for guidance on how to set up a vanilla HTTP listener.
+
 ### Forwarding logs with Filebeat <a name="forwarding-logs-filebeat"></a>
 
 Install [Filebeat](https://www.elastic.co/products/beats/filebeat) on the host you want to collect and forward logs from (see the *[References](#references)* section for links to detailed instructions).
@@ -303,13 +317,13 @@ Here is a sample `/etc/filebeat/filebeat.yml` configuration file for Filebeat, t
 	    enabled: true
 	    hosts:
 	      - elk:5044
-	    ssl:
-		  certificate_authorities:
-      	    - /etc/pki/tls/certs/logstash-beats.crt
 	    timeout: 15
+	    ssl:
+	      certificate_authorities:
+      	      - /etc/pki/tls/certs/logstash-beats.crt
 	
 	filebeat:
-	  prospectors:
+	  inputs:
 	    -
 	      paths:
 	        - /var/log/syslog
@@ -318,7 +332,9 @@ Here is a sample `/etc/filebeat/filebeat.yml` configuration file for Filebeat, t
 	    -
 	      paths:
 	        - "/var/log/nginx/*.log"
-	      document_type: nginx-access
+	      fields_under_root: true
+		  fields:
+		    type: nginx-access
 
 In the sample configuration file, make sure that you replace `elk` in `elk:5044` with the hostname or IP address of the ELK-serving host.
 
@@ -399,6 +415,14 @@ To build the Docker image from the source files, first clone the [Git repository
 
 - If you're using Compose then run `sudo docker-compose build elk`, which uses the `docker-compose.yml` file from the source repository to build the image. You can then run the built image with `sudo docker-compose up`.
 
+### Building the image for ARM64 <a name="building-image-arm64"></a>
+
+To build the image for ARM64 (e.g. Raspberry Pi), run the following command:
+
+	$ sudo docker build --build-arg IMAGE=master-arm64 --build-arg ARCH=aarch64 .
+
+**Note** – The OSS version of the image cannot be built for ARM64.  
+
 ## Tweaking the image <a name="tweaking-image"></a>
 
 There are several approaches to tweaking the image:
@@ -413,9 +437,15 @@ The next few subsections present some typical use cases.
 
 ### Updating Logstash's configuration <a name="updating-logstash-configuration"></a>
 
-The image contains several configuration files for Logstash (e.g. `01-lumberjack-input.conf`, `02-beats-input.conf`), all located in `/etc/logstash/conf.d`.
+Generally speaking, the directory layout for Logstash is the one described [here](https://www.elastic.co/guide/en/logstash/current/dir-layout.html#zip-targz-layout). 
 
-To modify an existing configuration file, you can bind-mount a local configuration file to a configuration file within the container at runtime. For instance, if you want to replace the image's `30-output.conf` Logstash configuration file with your local file `/path/to/your-30-output.conf`, then you would add the following `-v` option to your `docker` command line:
+Logstash's settings are defined by the configuration files (e.g. `logstash.yml`, `jvm.options`, `pipelines.yml`) located in `/opt/logstash/config`.
+
+Out of the box the image's `pipelines.yml` configuration file defines a default pipeline, made of the files (e.g. `01-lumberjack-input.conf`, `02-beats-input.conf`) located in `/etc/logstash/conf.d`.
+
+**Note** – Somewhat confusingly, the term "configuration file" may be used to refer to the files defining  Logstash's settings or those defining its pipelines (which are probably the ones you want to tweak the most).
+
+To modify an existing configuration file (be it a high-level Logstash configuration file, or a pipeline configuration file), you can bind-mount a local configuration file to a configuration file within the container at runtime. For instance, if you want to replace the image's `30-output.conf` configuration file with your local file `/path/to/your-30-output.conf`, then you would add the following `-v` option to your `docker` command line:
 
 	$ sudo docker run ... \
 		-v /path/to/your-30-output.conf:/etc/logstash/conf.d/30-output.conf \
@@ -446,7 +476,7 @@ A `Dockerfile` like the following will extend the base image and install the [Ge
 	ENV ES_HOME /opt/elasticsearch
 	WORKDIR ${ES_HOME}
 
-	RUN CONF_DIR=/etc/elasticsearch gosu elasticsearch bin/elasticsearch-plugin \
+	RUN yes | CONF_DIR=/etc/elasticsearch gosu elasticsearch bin/elasticsearch-plugin \
 		install -b ingest-geoip
 
 You can now build the new image (see the *[Building the image](#building-image)* section above) and run the container in the same way as you did with the base image.
@@ -472,14 +502,7 @@ The name of Kibana's home directory in the image is stored in the `KIBANA_HOME` 
 
 Kibana runs as the user `kibana`. To avoid issues with permissions, it is therefore recommended to install Kibana plugins as `kibana`, using the `gosu` command (see below for an example, and references for further details).  
 
-The following `Dockerfile` can be used to extend the base image and install the latest version of the [Sense plugin](https://www.elastic.co/guide/en/sense/current/index.html), a handy console for interacting with the REST API of Elasticsearch:
-
-	FROM sebp/elk
-
-	WORKDIR ${KIBANA_HOME}
-	RUN gosu kibana bin/kibana-plugin install elastic/sense
-
-See the *[Building the image](#building-image)* section above for instructions on building the new image. You can then run a container based on this image using the same command line as the one in the *[Usage](#usage)* section. The Sense interface will be accessible at `http://<your-host>:5601/apss/sense` (e.g. [http://localhost:5601/app/sense](http://localhost:5601/app/sense) for a local native instance of Docker).
+A `Dockerfile` similar to the ones in the sections on Elasticsearch and Logstash plugins can be used to extend the base image and install a Kibana plugin.
 
 ## Persisting log data <a name="persisting-log-data"></a>
 
@@ -624,11 +647,13 @@ As it stands this image is meant for local test use, and as such hasn't been sec
 
 To harden this image, at the very least you would want to:
 
-- Restrict the access to the ELK services to authorised hosts/networks only, as described in e.g. [Elasticsearch Scripting and Security](http://www.elasticsearch.org/blog/scripting-security/) and [Elastic Security: Deploying Logstash, ElasticSearch, Kibana "securely" on the Internet](http://blog.eslimasec.com/2014/05/elastic-security-deploying-logstash.html).
+- Restrict the access to the ELK services to authorised hosts/networks only, as described in e.g. [Elasticsearch Scripting and Security](https://www.elastic.co/blog/scripting-security/) and [Elastic Security: Deploying Logstash, ElasticSearch, Kibana "securely" on the Internet](http://blog.eslimasec.com/2014/05/elastic-security-deploying-logstash.html).
 - Password-protect the access to Kibana and Elasticsearch (see [SSL And Password Protection for Kibana](http://technosophos.com/2014/03/19/ssl-password-protection-for-kibana.html)).
 - Generate a new self-signed authentication certificate for the Logstash input plugins (see [Notes on certificates](#certificates)) or (better) get a proper certificate from a commercial provider (known as a certificate authority), and keep the private key private.
 
-The [sebp/elkx](https://hub.docker.com/r/sebp/elkx/) image, which extends the ELK image with X-Pack, may be a useful starting point to improve the security of the ELK services.
+X-Pack, which is now bundled with the other ELK services, may be a useful to implement enterprise-grade security to the ELK stack.
+
+Alternatively, to implement authentication in a simple way, a reverse proxy (e.g. as provided by [nginx](https://www.nginx.com/) or [Caddy](https://caddyserver.com/)) could be used in front of the ELK services. 
 
 If on the other hand you want to disable certificate-based server authentication (e.g. in a demo environment), see [Disabling SSL/TLS](#disabling-ssl-tls).
 
@@ -693,13 +718,15 @@ If the container stops and its logs include the message `max virtual memory area
 
 ### Elasticsearch is not starting (2): `cat: /var/log/elasticsearch/elasticsearch.log: No such file or directory` <a name="es-not-starting-not-enough-memory"></a>
 
-If Elasticsearch's logs are *not* dumped (i.e. you get the following message: `cat: /var/log/elasticsearch/elasticsearch.log: No such file or directory`), then Elasticsearch did not have enough memory to start, see [Prerequisites](#prerequisites). 
+If Elasticsearch's logs are *not* dumped (i.e. you get the following message: `cat: /var/log/elasticsearch/elasticsearch.log: No such file or directory`), then Elasticsearch did not have enough memory to start, see [Prerequisites](#prerequisites).
 
 ### Elasticsearch is not starting (3): bootstrap tests <a name="es-not-starting-bootstrap-tests"></a>
 
 **As from version 5**, if Elasticsearch is no longer starting, i.e. the `waiting for Elasticsearch to be up (xx/30)` counter goes up to 30 and the container exits with `Couln't start Elasticsearch. Exiting.` _and_ Elasticsearch's logs are dumped, then read the recommendations in the logs and consider that they *must* be applied.
 
 In particular, in case (1) above, the message `max virtual memory areas vm.max_map_count [65530] likely too low, increase to at least [262144]` means that the host's limits on mmap counts **must** be set to at least 262144.
+
+Another example is `max file descriptors [4096] for elasticsearch process is too low, increase to at least [65536]`. In this case, the host's limits on open files (as displayed by `ulimit -n`) must be increased (see [File Descriptors](https://www.elastic.co/guide/en/elasticsearch/reference/current/file-descriptors.html) in Elasticsearch documentation); and Docker's `ulimit` settings must be adjusted, either for the container (using [`docker run`'s `--ulimit` option](https://docs.docker.com/engine/reference/commandline/run/#set-ulimits-in-container---ulimit) or [Docker Compose's `ulimits` configuration option](https://docs.docker.com/compose/compose-file/#ulimits)) or globally (e.g. in `/etc/sysconfig/docker`, add `OPTIONS="--default-ulimit nofile=1024:65536"`). 
 
 ### Elasticsearch is suddenly stopping after having started properly <a name="es-suddenly-stopping"></a>
 
@@ -764,10 +791,9 @@ If the suggestions listed in [Frequently encountered issues](#frequent-issues) d
 
 - Start Elasticsearch manually to look at what it outputs:
 	 
-		$ gosu elasticsearch /opt/elasticsearch/bin/elasticsearch \
-			-Edefault.path.logs=/var/log/elasticsearch \
-			-Edefault.path.data=/var/lib/elasticsearch \
-			-Edefault.path.conf=/etc/elasticsearch 
+		$ ES_PATH_CONF=/etc/elasticsearch gosu elasticsearch /opt/elasticsearch/bin/elasticsearch \
+			-Epath.logs=/var/log/elasticsearch
+			-Epath.data=/var/lib/elasticsearch
 
 ### If your log-emitting client doesn't seem to be able to reach Logstash... <a name="logstash-unreachable"></a>
 
@@ -812,6 +838,15 @@ Bearing in mind that the first thing I'll need to do is reproduce your issue, pl
 ## Breaking changes <a name="breaking changes"></a>
 
 Here is the list of breaking changes that may have side effects when upgrading to later versions of the ELK image: 
+
+- **Java 11**
+
+	*Applies to tags: `780` and later.*
+
+	Since tag `es234_l234_k452`, this image used Java 8.
+
+	As Java 8 will no longer be supported by the ELK stack, as of tag `780`, Elasticsearch uses the version of OpenJDK that it is bundled with (OpenJDK 11), and Logstash uses a separately installed OpenJDK 11 package. This may have unintended side effects on plugins that rely on Java.
+
 
 - **`path.repo`**
 

@@ -39,6 +39,9 @@ ES_GROUP=elasticsearch
 # Directory where the Elasticsearch binary distribution resides
 ES_HOME=
 
+# Directory containing Java
+JAVA_HOME=$ES_HOME/jdk
+
 # Additional Java OPTS
 #ES_JAVA_OPTS=
 

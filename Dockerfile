@@ -1,5 +1,5 @@
 # Dockerfile for ELK stack
-# Elasticsearch, Logstash, Kibana 6.4.2
+# Elasticsearch, Logstash, Kibana OSS 7.9.1
 
 # Build with:
 # docker build -t <repo-user>/elk .
@@ -7,51 +7,53 @@
 # Run with:
 # docker run -p 5601:5601 -p 9200:9200 -p 5044:5044 -it --name elk <repo-user>/elk
 
-FROM phusion/baseimage
+# replace with master-arm64 for ARM64
+ARG IMAGE=18.04-1.0.0
+
+FROM phusion/baseimage:${IMAGE}
 MAINTAINER Sebastien Pujadas http://pujadas.net
-ENV REFRESHED_AT 2017-02-28
+ENV \
+ REFRESHED_AT=2020-06-20
 
 
 ###############################################################################
 #                                INSTALLATION
 ###############################################################################
 
-### install prerequisites (cURL, gosu, JDK, tzdata)
+### install prerequisites (cURL, gosu, tzdata, JDK for Logstash)
 
-ENV GOSU_VERSION 1.10
-
-ARG DEBIAN_FRONTEND=noninteractive
 RUN set -x \
- && apt-get update -qq \
- && apt-get install -qqy --no-install-recommends ca-certificates curl \
+ && apt update -qq \
+ && apt install -qqy --no-install-recommends ca-certificates curl gosu tzdata openjdk-11-jdk-headless \
+ && apt clean \
  && rm -rf /var/lib/apt/lists/* \
- && curl -L -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)" \
- && curl -L -o /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc" \
- && export GNUPGHOME="$(mktemp -d)" \
- && gpg --keyserver hkp://ha.pool.sks-keyservers.net:80 --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 \
- && gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \
- && rm -r "$GNUPGHOME" /usr/local/bin/gosu.asc \
- && chmod +x /usr/local/bin/gosu \
  && gosu nobody true \
- && apt-get update -qq \
- && apt-get install -qqy openjdk-8-jdk tzdata \
- && apt-get clean \
  && set +x
 
+### set current package version
 
-ENV ELK_VERSION 6.4.2
+ARG ELK_VERSION=oss-7.9.1
+# replace with aarch64 for ARM64 systems
+ARG ARCH=x86_64 
+
 
 ### install Elasticsearch
 
-ENV ES_VERSION ${ELK_VERSION}
-ENV ES_HOME /opt/elasticsearch
-ENV ES_PACKAGE elasticsearch-${ES_VERSION}.tar.gz
-ENV ES_GID 991
-ENV ES_UID 991
-ENV ES_PATH_CONF /etc/elasticsearch
-ENV ES_PATH_BACKUP /var/backups
+# predefine env vars, as you can't define an env var that references another one in the same block
+ENV \
+ ES_VERSION=${ELK_VERSION} \
+ ES_HOME=/opt/elasticsearch
 
-RUN mkdir ${ES_HOME} \
+ENV \
+ ES_PACKAGE=elasticsearch-${ES_VERSION}-linux-${ARCH}.tar.gz \
+ ES_GID=991 \
+ ES_UID=991 \
+ ES_PATH_CONF=/etc/elasticsearch \
+ ES_PATH_BACKUP=/var/backups \
+ KIBANA_VERSION=${ELK_VERSION}
+
+RUN DEBIAN_FRONTEND=noninteractive \
+ && mkdir ${ES_HOME} \
  && curl -O https://artifacts.elastic.co/downloads/elasticsearch/${ES_PACKAGE} \
  && tar xzf ${ES_PACKAGE} -C ${ES_HOME} --strip-components=1 \
  && rm -f ${ES_PACKAGE} \
@@ -60,20 +62,19 @@ RUN mkdir ${ES_HOME} \
  && mkdir -p /var/log/elasticsearch ${ES_PATH_CONF} ${ES_PATH_CONF}/scripts /var/lib/elasticsearch ${ES_PATH_BACKUP} \
  && chown -R elasticsearch:elasticsearch ${ES_HOME} /var/log/elasticsearch /var/lib/elasticsearch ${ES_PATH_CONF} ${ES_PATH_BACKUP}
 
-ADD ./elasticsearch-init /etc/init.d/elasticsearch
-RUN sed -i -e 's#^ES_HOME=$#ES_HOME='$ES_HOME'#' /etc/init.d/elasticsearch \
- && chmod +x /etc/init.d/elasticsearch
-
 
 ### install Logstash
 
-ENV LOGSTASH_VERSION ${ELK_VERSION}
-ENV LOGSTASH_HOME /opt/logstash
-ENV LOGSTASH_PACKAGE logstash-${LOGSTASH_VERSION}.tar.gz
-ENV LOGSTASH_GID 992
-ENV LOGSTASH_UID 992
-ENV LOGSTASH_PATH_CONF /etc/logstash
-ENV LOGSTASH_PATH_SETTINGS ${LOGSTASH_HOME}/config
+ENV \
+ LOGSTASH_VERSION=${ELK_VERSION} \
+ LOGSTASH_HOME=/opt/logstash
+
+ENV \
+ LOGSTASH_PACKAGE=logstash-${LOGSTASH_VERSION}.tar.gz \
+ LOGSTASH_GID=992 \
+ LOGSTASH_UID=992 \
+ LOGSTASH_PATH_CONF=/etc/logstash \
+ LOGSTASH_PATH_SETTINGS=${LOGSTASH_HOME}/config
 
 RUN mkdir ${LOGSTASH_HOME} \
  && curl -O https://artifacts.elastic.co/downloads/logstash/${LOGSTASH_PACKAGE} \
@@ -84,18 +85,14 @@ RUN mkdir ${LOGSTASH_HOME} \
  && mkdir -p /var/log/logstash ${LOGSTASH_PATH_CONF}/conf.d \
  && chown -R logstash:logstash ${LOGSTASH_HOME} /var/log/logstash ${LOGSTASH_PATH_CONF}
 
-ADD ./logstash-init /etc/init.d/logstash
-RUN sed -i -e 's#^LS_HOME=$#LS_HOME='$LOGSTASH_HOME'#' /etc/init.d/logstash \
- && chmod +x /etc/init.d/logstash
-
 
 ### install Kibana
 
-ENV KIBANA_VERSION ${ELK_VERSION}
-ENV KIBANA_HOME /opt/kibana
-ENV KIBANA_PACKAGE kibana-${KIBANA_VERSION}-linux-x86_64.tar.gz
-ENV KIBANA_GID 993
-ENV KIBANA_UID 993
+ENV \
+ KIBANA_HOME=/opt/kibana \
+ KIBANA_PACKAGE=kibana-${KIBANA_VERSION}-linux-${ARCH}.tar.gz \
+ KIBANA_GID=993 \
+ KIBANA_UID=993
 
 RUN mkdir ${KIBANA_HOME} \
  && curl -O https://artifacts.elastic.co/downloads/kibana/${KIBANA_PACKAGE} \
@@ -105,6 +102,25 @@ RUN mkdir ${KIBANA_HOME} \
  && useradd -r -s /usr/sbin/nologin -d ${KIBANA_HOME} -c "Kibana service user" -u ${KIBANA_UID} -g kibana kibana \
  && mkdir -p /var/log/kibana \
  && chown -R kibana:kibana ${KIBANA_HOME} /var/log/kibana
+
+
+###############################################################################
+#                              START-UP SCRIPTS
+###############################################################################
+
+### Elasticsearch
+
+ADD ./elasticsearch-init /etc/init.d/elasticsearch
+RUN sed -i -e 's#^ES_HOME=$#ES_HOME='$ES_HOME'#' /etc/init.d/elasticsearch \
+ && chmod +x /etc/init.d/elasticsearch
+
+### Logstash
+
+ADD ./logstash-init /etc/init.d/logstash
+RUN sed -i -e 's#^LS_HOME=$#LS_HOME='$LOGSTASH_HOME'#' /etc/init.d/logstash \
+ && chmod +x /etc/init.d/logstash
+
+### Kibana
 
 ADD ./kibana-init /etc/init.d/kibana
 RUN sed -i -e 's#^KIBANA_HOME=$#KIBANA_HOME='$KIBANA_HOME'#' /etc/init.d/kibana \
@@ -127,22 +143,23 @@ RUN cp ${ES_HOME}/config/log4j2.properties ${ES_HOME}/config/jvm.options \
 ### configure Logstash
 
 # certs/keys for Beats and Lumberjack input
-RUN mkdir -p /etc/pki/tls/certs && mkdir /etc/pki/tls/private
+RUN mkdir -p /etc/pki/tls/{certs,private}
 ADD ./logstash-beats.crt /etc/pki/tls/certs/logstash-beats.crt
 ADD ./logstash-beats.key /etc/pki/tls/private/logstash-beats.key
 
+# pipelines
+ADD pipelines.yml ${LOGSTASH_PATH_SETTINGS}/pipelines.yml
+
 # filters
-ADD ./02-beats-input.conf ${LOGSTASH_PATH_CONF}/conf.d/02-beats-input.conf
-ADD ./10-syslog.conf ${LOGSTASH_PATH_CONF}/conf.d/10-syslog.conf
-ADD ./11-nginx.conf ${LOGSTASH_PATH_CONF}/conf.d/11-nginx.conf
-ADD ./30-output.conf ${LOGSTASH_PATH_CONF}/conf.d/30-output.conf
+ADD ./logstash-conf/*.conf ${LOGSTASH_PATH_CONF}/conf.d/
 
 # patterns
 ADD ./nginx.pattern ${LOGSTASH_HOME}/patterns/nginx
 RUN chown -R logstash:logstash ${LOGSTASH_HOME}/patterns
 
 # Fix permissions
-RUN chmod -R +r ${LOGSTASH_PATH_CONF}
+RUN chmod -R +r ${LOGSTASH_PATH_CONF} ${LOGSTASH_PATH_SETTINGS} \
+ && chown -R logstash:logstash ${LOGSTASH_PATH_SETTINGS}
 
 ### configure logrotate
 
@@ -166,7 +183,7 @@ ADD ./kibana.yml ${KIBANA_HOME}/config/kibana.yml
 ADD ./start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
 
-EXPOSE 5601 9200 9300 5044
+EXPOSE 5601 9200 9300 9600 5044
 VOLUME /var/lib/elasticsearch
 
 CMD [ "/usr/local/bin/start.sh" ]
